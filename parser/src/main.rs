@@ -14,6 +14,7 @@
 
 mod helpers;
 
+
 use helpers::*;
 
 // =============================================================================================
@@ -190,13 +191,11 @@ fn parse_dos_header(data: &[u8]) -> Result<DosHeader> {
 
 /// Reads the 4-byte signature at `offset` and returns an error if it is not "PE\0\0" (0x00004550).
 fn check_pe_signature(data: &[u8], offset: u64) -> Result<()> {
-    let offset = offset as usize;
-    // println!("{}\n{}\n{}\n{}\n",data[offset], data[offset+1], data[offset+2], data[offset+3]);
-    if data[offset] != 0x50
-        || data[offset + 1] != 0x45
-        || data[offset + 2] != 0x00
-        || data[offset + 3] != 0x00
-    {
+    let offset = usize::try_from(offset).map_err(|_| ParseError::new("offset is too large"))?;
+    let full_read = offset.checked_add(4).ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
+    
+    let signature = data.get(offset..full_read).ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
+    if signature != b"PE\0\0"{
         return Err(ParseError::new("Invalide PE Signature"));
     }
     Ok(())
@@ -324,7 +323,16 @@ fn parse_sections(data: &[u8], offset: u64, count: u16) -> Result<Vec<Section>> 
 /// VirtualAddress <= rva < VirtualAddress + VirtualSize
 /// (some linkers write VirtualSize = 0; in that case use SizeOfRawData)
 fn find_section(pe: &PeFile, rva: u32) -> Option<&Section> {
-    // TODO
+    for section in pe.sections.iter(){
+        let size = if section.virtual_size ==0 {
+            section.size_of_raw_data
+        } else {
+            section.virtual_size
+        };
+        if (section.virtual_address <= rva) && (rva< section.virtual_address+ size){
+            return Some(section);
+        }
+    }
     None
 }
 
@@ -334,8 +342,15 @@ fn find_section(pe: &PeFile, rva: u32) -> Option<&Section> {
 ///   - delta = rva - VirtualAddress     -> delta >= SizeOfRawData: zero-filled memory, return None
 ///   - offset = PointerToRawData + delta
 fn rva_to_offset(pe: &PeFile, rva: u32) -> Option<u64> {
-    // TODO
-    None
+    if rva < pe.optional.size_of_headers{
+        return Some(rva as u64);
+    }
+    let section = find_section(pe, rva)?;
+    let delta= rva-section.virtual_address;
+    if delta >=section.size_of_raw_data{
+        return None;
+    }
+    Some((section.pointer_to_raw_data+delta)as u64)
 }
 
 // =============================================================================================
