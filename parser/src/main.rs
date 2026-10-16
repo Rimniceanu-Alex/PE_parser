@@ -14,7 +14,6 @@
 
 mod helpers;
 
-
 use helpers::*;
 
 // =============================================================================================
@@ -27,7 +26,6 @@ struct DosHeader {
 }
 
 /// a.k.a. COFF header
-#[derive(Default)]
 struct FileHeader {
     machine: u16,
     number_of_sections: u16,
@@ -41,7 +39,6 @@ struct DataDirectory {
     size: u32,
 }
 
-#[derive(Default)]
 struct OptionalHeader {
     magic: u16,
     is_pe32_plus: bool, // true for 64-bit files (Magic == 0x20B)
@@ -56,7 +53,6 @@ struct OptionalHeader {
     number_of_rva_and_sizes: u32,
     data_directories: Vec<DataDirectory>,
 }
-#[derive(Default)]
 struct Section {
     name: String,
     virtual_size: u32,
@@ -192,10 +188,14 @@ fn parse_dos_header(data: &[u8]) -> Result<DosHeader> {
 /// Reads the 4-byte signature at `offset` and returns an error if it is not "PE\0\0" (0x00004550).
 fn check_pe_signature(data: &[u8], offset: u64) -> Result<()> {
     let offset = usize::try_from(offset).map_err(|_| ParseError::new("offset is too large"))?;
-    let full_read = offset.checked_add(4).ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
-    
-    let signature = data.get(offset..full_read).ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
-    if signature != b"PE\0\0"{
+    let full_read = offset
+        .checked_add(4)
+        .ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
+
+    let signature = data
+        .get(offset..full_read)
+        .ok_or_else(|| ParseError::new("e_lfanew points outside the file"))?;
+    if signature != b"PE\0\0" {
         return Err(ParseError::new("Invalide PE Signature"));
     }
     Ok(())
@@ -203,13 +203,13 @@ fn check_pe_signature(data: &[u8], offset: u64) -> Result<()> {
 
 /// `offset` is where the COFF file header starts (right after the signature).
 fn parse_file_header(data: &[u8], offset: u64) -> Result<FileHeader> {
-    let mut cof_header = FileHeader::default();
-    cof_header.machine = read_u16(data, offset)?;
-    cof_header.number_of_sections = read_u16(data, offset + 2)?;
-    cof_header.time_date_stamp = read_u32(data, offset + 4)?;
-    cof_header.size_of_optional_header = read_u16(data, offset + 16)?;
-    cof_header.characteristics = read_u16(data, offset + 18)?;
-    Ok(cof_header)
+    Ok(FileHeader {
+        machine: read_u16(data, offset)?,
+        number_of_sections: read_u16(data, offset + 2)?,
+        time_date_stamp: read_u32(data, offset + 4)?,
+        size_of_optional_header: read_u16(data, offset + 16)?,
+        characteristics: read_u16(data, offset + 18)?,
+    })
 }
 
 /// Reads `count` entries of 8 bytes each: { u32 VirtualAddress (RVA); u32 Size; }
@@ -232,49 +232,49 @@ fn parse_optional_header(
     offset: u64,
     size_of_optional_header: u16,
 ) -> Result<OptionalHeader> {
-    let mut header: OptionalHeader = OptionalHeader::default();
-    header.magic = read_u16(data, offset)?;
-    if header.magic != 0x10B && header.magic != 0x20B {
+    let magic = read_u16(data, offset)?;
+    let mut is_pe32_plus = false;
+    if magic != 0x10B && magic != 0x20B {
         return Err(ParseError::new("Invald optional_header magic"));
     }
 
-    header.address_of_entry_point = read_u32(data, offset + 0x10)?;
-    if header.magic == 0x20B {
+    let address_of_entry_point = read_u32(data, offset + 0x10)?;
+
+    let image_base;
+    if magic == 0x20B {
         //PE32+
-        header.is_pe32_plus = true;
-        header.image_base = read_u64(data, offset + 0x18)?;
+        is_pe32_plus = true;
+        image_base = read_u64(data, offset + 0x18)?;
     } else {
-        header.image_base = read_u32(data, offset + 0x1C)? as u64;
+        image_base = read_u32(data, offset + 0x1C)? as u64;
     }
 
-    header.section_alignment = read_u32(data, offset + 0x20)?;
+    let section_alignment = read_u32(data, offset + 0x20)?;
 
-    header.file_alignment = read_u32(data, offset + 0x24)?;
+    let file_alignment = read_u32(data, offset + 0x24)?;
 
-    header.size_of_image = read_u32(data, offset + 0x38)?;
+    let size_of_image = read_u32(data, offset + 0x38)?;
 
-    header.size_of_headers = read_u32(data, offset + 0x3C)?;
+    let size_of_headers = read_u32(data, offset + 0x3C)?;
 
-    header.subsystem = read_u16(data, offset + 0x44)?;
+    let subsystem = read_u16(data, offset + 0x44)?;
 
-    header.dll_characteristics = read_u16(data, offset + 0x46)?;
+    let dll_characteristics = read_u16(data, offset + 0x46)?;
 
-    if header.is_pe32_plus {
-        header.number_of_rva_and_sizes = read_u32(data, offset + 0x6C)?;
+    let number_of_rva_and_sizes = if is_pe32_plus {
+        read_u32(data, offset + 0x6C)?
     } else {
-        header.number_of_rva_and_sizes = read_u32(data, offset + 0x5C)?;
-    }
+        read_u32(data, offset + 0x5C)?
+    };
 
-    let number_of_directories = 16.min(header.number_of_rva_and_sizes);
-    if header.is_pe32_plus {
-        header.data_directories =
-            parse_data_directories(data, offset + 0x70, number_of_directories)?;
+    let number_of_directories = 16.min(number_of_rva_and_sizes);
+    let data_directories = if is_pe32_plus {
+        parse_data_directories(data, offset + 0x70, number_of_directories)?
     } else {
-        header.data_directories =
-            parse_data_directories(data, offset + 0x60, number_of_directories)?;
-    }
+        parse_data_directories(data, offset + 0x60, number_of_directories)?
+    };
     let mut header_occupied_size = (8 * number_of_directories) as u16;
-    if header.is_pe32_plus {
+    if is_pe32_plus {
         header_occupied_size += 0x70;
     } else {
         header_occupied_size += 0x60;
@@ -286,27 +286,55 @@ fn parse_optional_header(
         ));
     }
 
-    Ok(header)
+    Ok(OptionalHeader {
+        magic,
+        is_pe32_plus,
+        address_of_entry_point,
+        image_base,
+        section_alignment,
+        file_alignment,
+        size_of_image,
+        size_of_headers,
+        subsystem,
+        dll_characteristics,
+        number_of_rva_and_sizes,
+        data_directories,
+    })
 }
 
 /// `offset` is where the section table starts; each section header is 40 bytes.
 fn parse_sections(data: &[u8], offset: u64, count: u16) -> Result<Vec<Section>> {
+    let full_size = (count as u64)
+        .checked_mul(40)
+        .ok_or_else(|| ParseError::new("Too many Sections"))?;
+    let end_offset = offset
+        .checked_add(full_size)
+        .ok_or_else(|| ParseError::new("Added size of all sections exceeds file size"))?;
+    if end_offset > data.len() as u64 {
+        return Err(ParseError::new(
+            "Added size of all sections exceeds file size",
+        ));
+    }
     let mut sections: Vec<Section> = Vec::new();
     let mut section_offset = 0;
     for _ in 0..count {
-        let mut section = Section::default();
+        let section = Section {
+            name: read_fixed_string(data, offset + section_offset, 8)?,
+            virtual_size: read_u32(data, offset + section_offset + 0x08)?,
+            virtual_address: read_u32(data, offset + section_offset + 0x0C)?,
+            size_of_raw_data: read_u32(data, offset + section_offset + 0x10)?,
+            pointer_to_raw_data: read_u32(data, offset + section_offset + 0x14)?,
+            characteristics: read_u32(data, offset + section_offset + 0x24)?,
+        };
 
-        section.name = read_fixed_string(data, offset + section_offset, 8)?;
-
-        section.virtual_size = read_u32(data, offset + section_offset + 0x08)?;
-
-        section.virtual_address = read_u32(data, offset + section_offset + 0x0C)?;
-
-        section.size_of_raw_data = read_u32(data, offset + section_offset + 0x10)?;
-
-        section.pointer_to_raw_data = read_u32(data, offset + section_offset + 0x14)?;
-
-        section.characteristics = read_u32(data, offset + section_offset + 0x24)?;
+        if (section.characteristics & 0x8000_0000 != 0)
+            && (section.characteristics & 0x2000_0000 != 0)
+        {
+            eprintln!(
+                "[WARNING]Section {} is both writeable and executable",
+                section.name
+            );
+        }
 
         sections.push(section);
         section_offset += 40;
@@ -323,13 +351,13 @@ fn parse_sections(data: &[u8], offset: u64, count: u16) -> Result<Vec<Section>> 
 /// VirtualAddress <= rva < VirtualAddress + VirtualSize
 /// (some linkers write VirtualSize = 0; in that case use SizeOfRawData)
 fn find_section(pe: &PeFile, rva: u32) -> Option<&Section> {
-    for section in pe.sections.iter(){
-        let size = if section.virtual_size ==0 {
+    for section in pe.sections.iter() {
+        let size = if section.virtual_size == 0 {
             section.size_of_raw_data
         } else {
             section.virtual_size
         };
-        if (section.virtual_address <= rva) && (rva< section.virtual_address+ size){
+        if (section.virtual_address <= rva) && (rva < section.virtual_address + size) {
             return Some(section);
         }
     }
@@ -342,15 +370,15 @@ fn find_section(pe: &PeFile, rva: u32) -> Option<&Section> {
 ///   - delta = rva - VirtualAddress     -> delta >= SizeOfRawData: zero-filled memory, return None
 ///   - offset = PointerToRawData + delta
 fn rva_to_offset(pe: &PeFile, rva: u32) -> Option<u64> {
-    if rva < pe.optional.size_of_headers{
+    if rva < pe.optional.size_of_headers {
         return Some(rva as u64);
     }
     let section = find_section(pe, rva)?;
-    let delta= rva-section.virtual_address;
-    if delta >=section.size_of_raw_data{
+    let delta = rva - section.virtual_address;
+    if delta >= section.size_of_raw_data {
         return None;
     }
-    Some((section.pointer_to_raw_data+delta)as u64)
+    Some((section.pointer_to_raw_data + delta) as u64)
 }
 
 // =============================================================================================
@@ -444,7 +472,7 @@ fn print_optional_header(opt: &OptionalHeader) {
     );
 
     println!("\nData directories");
-    println!("  {:<3} {:<13} {:<11} {}", "#", "Name", "RVA", "Size");
+    println!("  {:<3} {:<13} {:<11} Size", "#", "Name", "RVA");
     for (i, dir) in opt.data_directories.iter().enumerate() {
         println!(
             "  {:<3} {:<13} {:<11} {}",
@@ -459,8 +487,8 @@ fn print_optional_header(opt: &OptionalHeader) {
 fn print_sections(sections: &[Section]) {
     println!("\nSections");
     println!(
-        "  {:<3} {:<9} {:<11} {:<11} {:<11} {:<11} {:<11} {}",
-        "#", "Name", "VirtAddr", "VirtSize", "RawPtr", "RawSize", "Flags", "Perm"
+        "  {:<3} {:<9} {:<11} {:<11} {:<11} {:<11} {:<11} Perm",
+        "#", "Name", "VirtAddr", "VirtSize", "RawPtr", "RawSize", "Flags",
     );
     for (i, s) in sections.iter().enumerate() {
         println!(
