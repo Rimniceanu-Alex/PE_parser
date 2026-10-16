@@ -14,7 +14,6 @@
 
 mod helpers;
 
-use std::fs::read;
 
 use helpers::*;
 
@@ -97,22 +96,43 @@ fn subsystem_name(subsystem: u16) -> &'static str {
 }
 
 fn data_directory_name(index: usize) -> &'static str {
-    // TODO: complete the list of the 16 data directory names (see the lab page)
     const NAMES: [&str; 16] = [
-        "Export", "Import", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?",
+        "Export", "Import", "Resource", "Exception", "Security", "BaseReloc", "Debug", "Architecture", "GlobalPtr", "TLS", "LoadConfig", "BoundImport", "IAT", "DelayImport", "CLR", "Reserved",
     ];
     NAMES.get(index).copied().unwrap_or("?")
 }
 
-// TODO: complete both flag tables (see the lab page). decode_flags() shows unknown bits in hex.
 const FILE_CHARACTERISTICS: &[(u64, &str)] = &[
     (0x0001, "RELOCS_STRIPPED"),
     (0x0002, "EXECUTABLE_IMAGE"),
+    (0x0004 , "LINE_NUMS_STRIPPED"),
+    (0x0008 , "LOCAL_SYMS_STRIPPED"),
+    (0x0010 , "AGGRESSIVE_WS_TRIM"),
+    (0x0020 , "LARGE_ADDRESS_AWARE"),
+    (0x0040 , "_________________"),
+    (0x0080 , "BYTES_REVERSED_LO"),
+    (0x0100 , "32BIT_MACHINE"),
+    (0x0200 , "STRIPPED"),
+    (0x0400 , "REMOVABLE_RUN_FROM_SWAP"),
+    (0x0800 , "NET_RUN_FROM_SWAP"),
+    (0x1000 , "SYSTEM"),
+    (0x2000 , "DLL"),
+    (0x4000 , "UP_SYSTEM_ONLY"),
+    (0x8000 , "BYTES_REVERSED_HI"),
 ];
 
 const DLL_CHARACTERISTICS: &[(u64, &str)] = &[
     (0x0020, "HIGH_ENTROPY_VA"),
     (0x0040, "DYNAMIC_BASE"),
+    (0x0080, "FORCE_INTEGRITY"),
+    (0x0100 , "NX_COMPAT"),
+    (0x0200 , "NO_ISOLATION"),
+    (0x0400 , "NO_SEH"),
+    (0x0800, "NO_BIND"),
+    (0x1000 , "APPCONTAINER"),
+    (0x2000 , "WDM_DRIVER"),
+    (0x4000 , "GUARD_CF"),
+    (0x8000 , "TERMINAL_SERVER_AWARE"),
 ];
 
 /// Returns "R-X", "RW-", ... from the IMAGE_SCN_MEM_READ (0x40000000), IMAGE_SCN_MEM_WRITE (0x80000000)
@@ -228,7 +248,7 @@ fn parse_optional_header(data: &[u8], offset: u64, size_of_optional_header: u16)
     if (size_of_optional_header as u64) < local_offset-offset{
         return Err(ParseError::new("Optional Header is too small to accomodate the directories"));
     }
-    
+
     Ok((header, local_offset))
 }
 
@@ -397,7 +417,7 @@ fn run(path: &str) -> Result<()> {
     print_pe_signature(pe_offset);
 
     // Step 3: the COFF file header follows the 4-byte signature.
-    let file_header_offset: u64 = pe_offset+4; // TODO
+    let file_header_offset: u64 = pe_offset+4;
     let file = parse_file_header(&data, file_header_offset)?;
     print_file_header(&file);
 
@@ -407,7 +427,7 @@ fn run(path: &str) -> Result<()> {
     print_optional_header(&optional);
 
     // Step 5: the section table follows the optional header (SizeOfOptionalHeader bytes).
-    let section_table_offset: u64 = optional_header_final_offset; // TODO
+    let section_table_offset: u64 = optional_header_final_offset;
     let sections = parse_sections(&data, section_table_offset, file.number_of_sections)?;
     print_sections(&sections);
 
