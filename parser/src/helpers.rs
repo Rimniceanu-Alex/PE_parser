@@ -68,7 +68,10 @@ pub fn read_bytes(data: &[u8], offset: u64, count: u64) -> Result<&[u8]> {
 /// Reads an unsigned little-endian integer of `size` bytes (used by the read_uXX functions below).
 fn read_le(data: &[u8], offset: u64, size: u64) -> Result<u64> {
     let bytes = read_bytes(data, offset, size)?;
-    Ok(bytes.iter().rev().fold(0u64, |value, &b| (value << 8) | b as u64))
+    Ok(bytes
+        .iter()
+        .rev()
+        .fold(0u64, |value, &b| (value << 8) | b as u64))
 }
 
 pub fn read_u8(data: &[u8], offset: u64) -> Result<u8> {
@@ -119,7 +122,8 @@ pub fn format_unix_timestamp(timestamp: u32) -> String {
     let days = timestamp as i64 / 86400 + 719468;
     let era = days / 146097;
     let day_of_era = days - era * 146097;
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let mp = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * mp + 2) / 5 + 1;
