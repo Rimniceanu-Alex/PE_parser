@@ -14,6 +14,8 @@
 
 mod helpers;
 
+use std::fs::read;
+
 use helpers::*;
 
 // =============================================================================================
@@ -40,6 +42,7 @@ struct DataDirectory {
     size: u32,
 }
 
+#[derive(Default)]
 struct OptionalHeader {
     magic: u16,
     is_pe32_plus: bool, // true for 64-bit files (Magic == 0x20B)
@@ -78,6 +81,8 @@ struct PeFile {
 fn machine_name(machine: u16) -> &'static str {
     match machine {
         0x014C => "x86",
+        0x8664 => "x64",
+        0xAA64 => "ARM64",
         // TODO: add x64 (0x8664) and ARM64 (0xAA64)
         _ => "unknown",
     }
@@ -161,19 +166,70 @@ fn parse_file_header(data: &[u8], offset: u64) -> Result<FileHeader> {
 /// Reads `count` entries of 8 bytes each: { u32 VirtualAddress (RVA); u32 Size; }
 fn parse_data_directories(data: &[u8], offset: u64, count: u32) -> Result<Vec<DataDirectory>> {
     let mut directories: Vec<DataDirectory> = Vec::new();
-    // TODO
-    Err(ParseError::new("TODO: implement parse_data_directories()"))
+    let mut local_offset=  offset;
+    for _ in 0..count{
+        let rva = read_u32(data, local_offset)?;
+        local_offset +=4;
+        let size = read_u32(data, local_offset)?;
+        local_offset +=4;
+        directories.push(DataDirectory { rva, size });
+    }
+    Ok(directories)
 }
 
 /// `offset` is where the optional header starts. Remember: some offsets differ between PE32 and PE32+.
-fn parse_optional_header(data: &[u8], offset: u64, size_of_optional_header: u16) -> Result<OptionalHeader> {
-    // TODO:
-    //   1. read Magic; return an error if it is neither 0x10B (PE32) nor 0x20B (PE32+)
-    //   2. read the other fields, using the right offsets for PE32 / PE32+
-    //   3. never trust NumberOfRvaAndSizes: parse at most 16 data directories
-    //   4. return an error if size_of_optional_header is too small to hold the data directories
-    //   5. data_directories: parse_data_directories(...)?
-    Err(ParseError::new("TODO: implement parse_optional_header()"))
+fn parse_optional_header(data: &[u8], offset: u64, size_of_optional_header: u16) -> Result<(OptionalHeader, u64)> {
+    let mut header = OptionalHeader::default();
+    let mut  local_offset = offset;
+
+    header.magic = read_u16(data, offset)?;
+    local_offset+=2;
+    if header.magic != 0x10B && header.magic != 0x20B{
+        return Err(ParseError::new("Invald optional_header magic"));
+    }
+
+    header.address_of_entry_point = read_u32(data, offset+2)?;
+    local_offset+=4;
+
+    if header.magic == 0x20B{//PE32+
+        header.image_base = read_u64(data, local_offset)?;
+        local_offset+=8;
+    }
+    else{
+        header.image_base = read_u32(data, local_offset)? as u64;
+        local_offset+=4;
+    }
+    
+    header.section_alignment= read_u32(data, local_offset)?;
+    local_offset+=4;
+
+    header.file_alignment= read_u32(data, local_offset)?;
+    local_offset+=4;
+
+    header.size_of_image = read_u32(data, local_offset)?;
+    local_offset+=4;
+
+    header.size_of_headers = read_u32(data, local_offset)?;
+    local_offset+=4;
+
+    header.subsystem = read_u16(data, local_offset)?;
+    local_offset+=2;
+
+    header.dll_characteristics = read_u16(data, local_offset)?;
+    local_offset+=2;
+
+    header.number_of_rva_and_sizes = read_u32(data, local_offset)?;
+    local_offset+=4;
+
+    let number_of_directories = 16.min(header.number_of_rva_and_sizes);
+    header.data_directories = parse_data_directories(data, local_offset, number_of_directories)?;
+    local_offset += (8*number_of_directories) as u64;
+
+    if (size_of_optional_header as u64) < local_offset-offset{
+        return Err(ParseError::new("Optional Header is too small to accomodate the directories"));
+    }
+    
+    Ok((header, local_offset))
 }
 
 /// `offset` is where the section table starts; each section header is 40 bytes.
@@ -347,11 +403,11 @@ fn run(path: &str) -> Result<()> {
 
     // Step 4: the optional header follows the 20-byte COFF file header.
     let optional_header_offset: u64 = file_header_offset+20;
-    let optional = parse_optional_header(&data, optional_header_offset, file.size_of_optional_header)?;
+    let (optional, optional_header_final_offset) = parse_optional_header(&data, optional_header_offset, file.size_of_optional_header)?;
     print_optional_header(&optional);
 
     // Step 5: the section table follows the optional header (SizeOfOptionalHeader bytes).
-    let section_table_offset: u64 = 0; // TODO
+    let section_table_offset: u64 = optional_header_final_offset; // TODO
     let sections = parse_sections(&data, section_table_offset, file.number_of_sections)?;
     print_sections(&sections);
 
